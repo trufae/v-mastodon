@@ -2,6 +2,7 @@ module mastodon
 
 import net.http
 import net.websocket
+import log
 import json
 
 pub struct Status {
@@ -52,11 +53,16 @@ pub:
 
 pub struct Mastodon {
 	config Config
+mut:
+	log log.Log
 }
 
 pub fn new(config Config) Mastodon {
 	return Mastodon{
 		config: config
+		log: &log.Log{
+			level: .info
+		}
 	}
 	/*
 	{
@@ -70,7 +76,8 @@ pub fn new(config Config) Mastodon {
 
 pub type EventCallback = fn (text string)
 
-pub fn (m Mastodon) streaming(kind string, ecb EventCallback) !bool {
+// connect to a stream and run the callback when new events are found
+pub fn (mut m Mastodon) streaming(kind string, ecb EventCallback) !bool {
 	// user | public | local | hashtag | list
 	url := 'wss://${m.config.instance}/api/v1/streaming'
 	mut ws := websocket.new_client(url)!
@@ -95,17 +102,25 @@ pub fn (m Mastodon) streaming(kind string, ecb EventCallback) !bool {
 	ws.on_close(fn (mut ws websocket.Client, a int, b string) ! {
 		println('Connection closed.')
 	})
-	println('Connecting')
+	m.log.debug('connecting to the websocket')
 	ws.connect()!
-	println('Listening')
+	m.log.debug('listening for events')
 	ws.listen()!
-	// spawn ws.listen()
 
 	return true
 }
 
-pub fn (m Mastodon) timeline(name string) ![]Message {
-	// names can be 'home'
+pub struct TimelineOptions {
+	local  bool
+	remote bool
+	// TODO: optional: local=true, remote=true, only_media
+	// TODO: optional: since_id, min_id, max_id, limit
+}
+
+// pull messages from given timeline. name can be: 'home', 'public', 'tag/:hashtag'
+pub fn (mut m Mastodon) timeline(name string, options TimelineOptions) ![]Message {
+	// TODO: optional: local=true, remote=true, only_media
+	// TODO: optional: since_id, min_id, max_id, limit
 	mut request := http.Request{
 		url: 'https://' + m.config.instance + '/api/v1/timelines/' + name
 		header: http.new_header_from_map({
@@ -114,13 +129,10 @@ pub fn (m Mastodon) timeline(name string) ![]Message {
 		method: .get
 	}
 	res := request.do()!
-	mentions := json.decode([]Message, res.body)!
-	dump(mentions)
-	// println(res.body)
-	return mentions
+	return json.decode([]Message, res.body)!
 }
 
-pub fn (m Mastodon) post(msg PostOptions) bool {
+pub fn (mut m Mastodon) post(msg PostOptions) bool {
 	mut request := http.Request{
 		url: 'https://' + m.config.instance + '/api/v1/statuses'
 		header: http.new_header_from_map({
